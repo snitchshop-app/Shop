@@ -402,7 +402,7 @@
   }
   
     /* ===== ВЕРСИЯ ДЛЯ САЙТА (обычный браузер) ===== */
-  .age-overlay { position: fixed; inset: 0; z-index: 20000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(10,8,20,0.94); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+  .age-overlay { position: fixed; inset: 0; z-index: 20000; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgb(10,8,20); }
   .age-overlay.hidden { display: none; }
   .age-card { background: var(--surface); border: 1px solid var(--text); border-radius: 22px; padding: 30px 24px 26px; width: 100%; max-width: 360px; text-align: center; }
   .age-card img { width: 110px; height: 110px; object-fit: contain; margin-bottom: 10px; }
@@ -1359,7 +1359,6 @@ function selectLang(l) {
   if (active === 's-cart') renderCart();
   if (active === 's-order') renderOrderForm();
   updateCartBar();
-  showAgeGate();   // после выбора языка спрашиваем про возраст (сайт и Telegram)
 }
 
 function showLimitAlert() {
@@ -1849,7 +1848,7 @@ function showAgeGate() {
     '<button class="age-btn age-no" onclick="ageNo()">' + t.no + '</button>';
   el.classList.remove('hidden');
 }
-if (lang) showAgeGate();   // язык уже выбран раньше, а возраст ещё не подтверждён
+showAgeGate();   // возраст спрашиваем первым (по умолчанию на польском), выбор языка идёт после
 function ageYes() {
   try { localStorage.setItem('sh_age18', '1'); } catch (e) { _ageMem = true; }
   document.getElementById('age-overlay').classList.add('hidden');
