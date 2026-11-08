@@ -977,7 +977,7 @@ function computeItemUnitPrice(item, totalQtyForPricing) {
 
 // Проверяет остаток и создаёт заказ в KeyCRM для товаров, у которых есть SKU в SKU_MAP.
 // Если в корзине нет отслеживаемых товаров — пропускает проверку (для остальных вкусов пока нет склада).
-async function verifyAndCreateOrder(items, buyer, shipping) {
+async function verifyAndCreateOrder(items, buyer, shipping, comment) {
   const totalQtyForPricing = getTotalQtyForPricing();
   const products = items
     .filter(i => SKU_MAP[i.key])
@@ -996,7 +996,7 @@ async function verifyAndCreateOrder(items, buyer, shipping) {
     const res = await fetch(`${PROXY_URL}/order`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ buyer, shipping, products, campaign: getCampaign(), uid: getUid() })
+      body: JSON.stringify({ buyer, shipping, products, comment: comment || '', campaign: getCampaign(), uid: getUid() })
     });
     const data = await res.json();
 
@@ -1050,7 +1050,7 @@ async function onManagerClick(ev) {
   managerBusy = true;
   const link = document.getElementById('manager-link');
   const url = link.href;
-  const r = await verifyAndCreateOrder(Object.values(cart), pendingOrder.buyer, pendingOrder.shipping);
+  const r = await verifyAndCreateOrder(Object.values(cart), pendingOrder.buyer, pendingOrder.shipping, pendingOrder.comment);
   managerBusy = false;
   if (!r.ok) { showModal(r.message); return; }
   orderCreated = true;
@@ -2536,20 +2536,9 @@ async function submitCrypto() {
   pendingOrder = { buyer: { full_name: 'Криптовалюта — ожидает данные от менеджера', phone: '' }, shipping: {}, pay: 'crypto' };
   orderCreated = false;
 
-  const total = cartTotal();
-  const delivery = getDeliveryCost();
-  const count = cartCount();
-  const orderLines = buildOrderLines();
-
-  let msg = `${tr('msg_greeting')}\n\n`;
-  msg += `${tr('pay_label_crypto')}\n`;
-  msg += `${lang === 'pl' ? 'ZAMÓWIENIE' : 'ЗАКАЗ'}\n\n`;
-  msg += orderLines;
-  msg += tr('msg_total', count) + '\n';
-  msg += `CENA: ${total} Zł\n\n`;
-  msg += `Cena dostawy: ${delivery} Zł\n`;
-  msg += `Razem do zapłaty: ${total}+${delivery}=${total + delivery} Zł`;
-
+  pendingOrder.comment = buildBotOrderText('Kryptowaluta', '');
+  // клиент пишет менеджеру только короткое сообщение — заказ уже уходит в бота
+  const msg = 'Dzień dobry, proszę o potwierdzenie zamówienia (kryptowaluta)';
   const encoded = encodeURIComponent(msg);
   document.getElementById('manager-link').href = `https://t.me/${MANAGER_USERNAME}?text=${encoded}`;
   document.getElementById('success-sub').textContent = tr('success_sub_crypto');
@@ -2590,42 +2579,35 @@ async function submitCOD() {
   pendingOrder = { buyer: { full_name: name, phone }, shipping: { shipping_address_city: miasto }, pay: 'cod' };
   orderCreated = false;
 
-  const total = cartTotal();
-  const delivery = getDeliveryCost();
-  const count = cartCount();
-  const orderLines = buildOrderLines();
-
-  let msg = `${tr('msg_greeting')}\n\n`;
-  msg += `${tr('pay_label_cod')}\n`;
-  msg += `${lang === 'pl' ? 'ZAMÓWIENIE' : 'ЗАКАЗ'}\n\n`;
-  msg += orderLines;
-  msg += tr('msg_total', count) + '\n';
-  msg += `CENA: ${total} Zł\n\n`;
-  msg += `Imię i Nazwisko: ${name}\n`;
-  msg += `Telefon: ${phone}\n`;
-
+  let dl = '';
   if (orderDelivery === 'paczkomat') {
-    msg += `Dostawa: Paczkomat InPost\n`;
-    msg += `Miasto: ${miasto}\n`;
-    msg += `Kod paczkomatu: ${kodpacz}\n`;
+    dl = `Dostawa: Paczkomat InPost\nMiasto: ${miasto}\nKod paczkomatu: ${kodpacz}\n`;
   } else if (orderDelivery === 'zabka') {
-    msg += `Dostawa: Żabka\n`;
-    msg += `Miasto: ${miasto}\n`;
-    msg += `Sklep Żabka / kod punktu: ${zabka}\n`;
+    dl = `Dostawa: Żabka\nMiasto: ${miasto}\nSklep Żabka / kod punktu: ${zabka}\n`;
   } else {
-    msg += `Dostawa: Kurier\n`;
-    msg += `Miasto: ${miasto}\n`;
-    msg += `Kod pocztowy: ${kod}\n`;
-    msg += `Ulica: ${ulica} ${budynek}${lokal ? ' / ' + lokal : ''}\n`;
+    dl = `Dostawa: Kurier\nMiasto: ${miasto}\nKod pocztowy: ${kod}\nUlica: ${ulica} ${budynek}${lokal ? ' / ' + lokal : ''}\n`;
   }
-
-  msg += `\nCena dostawy: ${delivery} Zł\n`;
-  msg += `Razem do zapłaty: ${total}+${delivery}=${total + delivery} Zł`;
-
+  pendingOrder.comment = buildBotOrderText('Pobranie', `Imię i Nazwisko: ${name}\nTelefon: ${phone}\n${dl}\n`);
+  // клиент пишет менеджеру только имя и фамилию — полный заказ уже уходит в бота
+  const msg = `Dzień dobry, proszę o potwierdzenie zamówienia na imię ${name}`;
   const encoded = encodeURIComponent(msg);
   document.getElementById('manager-link').href = `https://t.me/${MANAGER_USERNAME}?text=${encoded}`;
   document.getElementById('success-sub').textContent = tr('success_sub_cod');
   goTo('s-success');
+}
+
+// Полный текст заказа по-польски (формат как на сайте) — уходит в бота/KeyCRM, клиент его не отправляет.
+function buildBotOrderText(payLabel, clientLines) {
+  const T_ = getTotalQtyForPricing(), total = cartTotal(), delivery = getDeliveryCost(), count = cartCount();
+  const byModel = {};
+  Object.values(cart).forEach(i => { (byModel[i.modelName] = byModel[i.modelName] || []).push(i); });
+  let ol = '';
+  Object.entries(byModel).forEach(([model, items]) => {
+    ol += `${model}\n`;
+    items.forEach(i => { ol += `${i.flavor} x${i.qty} - ${computeItemUnitPrice(i, T_)} ZŁ\n`; });
+    ol += '\n';
+  });
+  return `Dzień dobry, proszę o potwierdzenie zamówienia\n\n${payLabel}\nZAMÓWIENIE\n\n${ol}TOTAL: ${count} sztuk\nCENA: ${total} Zł\n\n${clientLines}Cena dostawy: ${delivery} Zł\nRazem do zapłaty: ${total}+${delivery}=${total + delivery} Zł`;
 }
 
 function newOrder() {
