@@ -1082,6 +1082,18 @@ function applyStockLabels(model) {
   });
 }
 
+// Порядок вкусов: сначала в наличии (по алфавиту), потом распроданные (тоже по алфавиту)
+let shownFlavorOrder = ''; // в каком порядке вкусы сейчас нарисованы на экране
+function sortedFlavors(model) {
+  const isOut = f => { const sku = SKU_MAP[`${model.id}::${f}`]; return !!sku && (sku in stockCache) && stockCache[sku] <= 0; };
+  const abc = (a, b) => a.localeCompare(b, 'en', { sensitivity: 'base', numeric: true });
+  return model.flavors.slice().sort((a, b) => (isOut(a) - isOut(b)) || abc(a, b));
+}
+// Если после получения остатков порядок изменился — перерисовываем список (обычно этого не требуется)
+function reorderFlavorsIfNeeded(model) {
+  if (model === currentModel && shownFlavorOrder && sortedFlavors(model).join('|') !== shownFlavorOrder) renderFlavors();
+}
+
 // Загружает остатки ВСЕХ товаров одним быстрым запросом — при входе и потом раз в минуту,
 // чтобы к моменту открытия модели данные уже были и вкусы не «прыгали».
 async function preloadStock() {
@@ -1092,7 +1104,7 @@ async function preloadStock() {
     if (!data.results) return;
     Object.values(SKU_MAP).forEach(sku => { stockCache[sku] = data.results[sku] ?? 0; });
     stockLoadedAt = Date.now();
-    if (typeof currentModel !== 'undefined' && currentModel) applyStockLabels(currentModel);
+    if (typeof currentModel !== 'undefined' && currentModel) { applyStockLabels(currentModel); reorderFlavorsIfNeeded(currentModel); }
   } catch (e) { /* не получилось — не страшно, при открытии модели спросим ещё раз */ }
 }
 preloadStock();
@@ -1123,6 +1135,7 @@ async function loadStockForModel(model) {
 
   skus.forEach(sku => { stockCache[sku] = results[sku] ?? 0; });
   applyStockLabels(model);
+  reorderFlavorsIfNeeded(model);
 }
 
 // ============================================================
@@ -2068,7 +2081,9 @@ function renderFlavors() {
     </div>`;
   }
 
-  list.innerHTML = tiersHtml + currentModel.flavors.map(flavor => {
+  const flavorsSorted = sortedFlavors(currentModel); // в наличии — сверху, по алфавиту
+  shownFlavorOrder = flavorsSorted.join('|');
+  list.innerHTML = tiersHtml + flavorsSorted.map(flavor => {
     const key = `${currentModel.id}::${flavor}`;
     const qty = cart[key]?.qty || 0;
     return `
