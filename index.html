@@ -1064,31 +1064,15 @@ async function onManagerClick(ev) {
 
 // Кэш остатков: sku -> количество доступно
 let stockCache = {};
+let stockLoadedAt = 0; // когда последний раз получили остатки (мс)
 
-// Загружает актуальные остатки для отслеживаемых вкусов текущей модели ОДНИМ запросом
-// и обновляет подпись "осталось N шт" под каждым таким вкусом.
-async function loadStockForModel(model) {
-  const trackedFlavors = model.flavors.filter(flavor => SKU_MAP[`${model.id}::${flavor}`]);
-  if (trackedFlavors.length === 0) return;
-
-  const skus = trackedFlavors.map(flavor => SKU_MAP[`${model.id}::${flavor}`]);
-
-  let results = {};
-  try {
-    const res = await fetch(`${PROXY_URL}/stock-bulk?skus=${encodeURIComponent(skus.join(','))}`);
-    const data = await res.json();
-    results = data.results || {};
-  } catch (e) {
-    console.error('Не удалось получить остатки для модели', model.id, e);
-    return; // не удалось получить остатки — пропускаем, ограничение не применится
-  }
-
-  trackedFlavors.forEach(flavor => {
+// Рисует подпись «Нет в наличии» под вкусами модели из stockCache (то, что уже известно — мгновенно)
+function applyStockLabels(model) {
+  model.flavors.forEach(flavor => {
     const key = `${model.id}::${flavor}`;
     const sku = SKU_MAP[key];
-    const qty = results[sku] ?? 0;
-    stockCache[sku] = qty;
-
+    if (!sku || !(sku in stockCache)) return;
+    const qty = stockCache[sku];
     const stockEl = document.getElementById('stock-' + safeId(key));
     if (stockEl) {
       // Точное число остатка клиенту не показываем — только факт, что товара нет
@@ -1096,6 +1080,49 @@ async function loadStockForModel(model) {
       stockEl.classList.toggle('out-of-stock', qty <= 0);
     }
   });
+}
+
+// Загружает остатки ВСЕХ товаров одним быстрым запросом — при входе и потом раз в минуту,
+// чтобы к моменту открытия модели данные уже были и вкусы не «прыгали».
+async function preloadStock() {
+  try {
+    const res = await fetch(`${PROXY_URL}/stock-all`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.results) return;
+    Object.values(SKU_MAP).forEach(sku => { stockCache[sku] = data.results[sku] ?? 0; });
+    stockLoadedAt = Date.now();
+    if (typeof currentModel !== 'undefined' && currentModel) applyStockLabels(currentModel);
+  } catch (e) { /* не получилось — не страшно, при открытии модели спросим ещё раз */ }
+}
+preloadStock();
+setInterval(() => { if (!document.hidden) preloadStock(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - stockLoadedAt > 60000) preloadStock(); });
+
+// Показывает остатки для вкусов текущей модели: сначала то, что уже известно (мгновенно),
+// и только если данных нет или они старые — спрашивает сервер.
+async function loadStockForModel(model) {
+  const trackedFlavors = model.flavors.filter(flavor => SKU_MAP[`${model.id}::${flavor}`]);
+  if (trackedFlavors.length === 0) return;
+
+  const skus = trackedFlavors.map(flavor => SKU_MAP[`${model.id}::${flavor}`]);
+
+  applyStockLabels(model); // 1) сразу, без ожидания
+  if (Date.now() - stockLoadedAt < 60000 && skus.every(sku => sku in stockCache)) return; // данные свежие
+
+  let results = {};
+  try {
+    const res = await fetch(`${PROXY_URL}/stock-bulk?skus=${encodeURIComponent(skus.join(','))}`);
+    const data = await res.json();
+    if (!res.ok || !data.results) return;
+    results = data.results;
+  } catch (e) {
+    console.error('Не удалось получить остатки для модели', model.id, e);
+    return; // не удалось получить остатки — пропускаем, ограничение не применится
+  }
+
+  skus.forEach(sku => { stockCache[sku] = results[sku] ?? 0; });
+  applyStockLabels(model);
 }
 
 // ============================================================
